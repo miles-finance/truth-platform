@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Truth Platform</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -511,10 +512,15 @@
       </div>
     </div>
   </div>
+
+  <footer style="text-align:center; padding:40px 0 16px; font-size:0.72rem; color:var(--muted)">
+    Powered by Claude &middot; DuckDuckGo &middot; Trafilatura
+  </footer>
 </div>
 
 <script>
 let cacheKey = null;
+let _running = false; // double-submit guard
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 // Steps: 0=Fetch, 1=Opposing View, 2=Analysis, 3=Claims, 4=Evidence, 5=Done
@@ -620,9 +626,11 @@ function clearError() {
 
 // ─── Phase 1 ──────────────────────────────────────────────────────────────────
 async function runPhase1(input) {
+  _running = true;
   clearError();
   startProgress();
   document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('analyze-btn-pdf').disabled = true;
 
   try {
     const resp = await fetch('/api/analyze', {
@@ -636,18 +644,26 @@ async function runPhase1(input) {
     cacheKey = data.cache_key;
     renderPhase1(data);
     document.getElementById('results').classList.add('visible');
+    document.getElementById('results').scrollIntoView({behavior: 'smooth', block: 'start'});
     advanceToPhase2();
     await runPhase2();
+    // Scroll to phase 2 results after they render
+    document.getElementById('phase2-section').scrollIntoView({behavior: 'smooth', block: 'start'});
   } catch(e) {
     abortProgress();
     showError('Error: ' + e.message);
+  } finally {
+    _running = false;
     document.getElementById('analyze-btn').disabled = false;
+    if (selectedPdf) document.getElementById('analyze-btn-pdf').disabled = false;
   }
 }
 
 function runAnalyze() {
+  if (_running) return;
   const input = document.getElementById('article-input').value.trim();
   if (!input) return;
+  document.getElementById('analyze-btn').disabled = true;
   runPhase1(input);
 }
 
@@ -657,14 +673,14 @@ function renderPhase1(data) {
 
   const aUrl = data.article_a.source_url;
   document.getElementById('title-a').innerHTML = aUrl
-    ? `<a href="${aUrl}" target="_blank">${escHtml(data.article_a.title)}</a>`
+    ? `<a href="${aUrl}" target="_blank" rel="noopener noreferrer">${escHtml(data.article_a.title)}</a>`
     : escHtml(data.article_a.title);
   document.getElementById('lean-a').textContent = data.article_a.ideology_lean || 'unknown';
   document.getElementById('summary-a').textContent = data.article_a.summary;
 
   const bUrl = data.article_b.source_url;
   document.getElementById('title-b').innerHTML = bUrl
-    ? `<a href="${bUrl}" target="_blank">${escHtml(data.article_b.title)}</a>`
+    ? `<a href="${bUrl}" target="_blank" rel="noopener noreferrer">${escHtml(data.article_b.title)}</a>`
     : escHtml(data.article_b.title);
   document.getElementById('lean-b').textContent = data.article_b.ideology_lean || 'unknown';
   document.getElementById('summary-b').textContent = data.article_b.summary;
@@ -703,8 +719,6 @@ async function runPhase2() {
   } catch(e) {
     abortProgress();
     showError('Scoring error: ' + e.message);
-  } finally {
-    document.getElementById('analyze-btn').disabled = false;
   }
 }
 
@@ -734,7 +748,7 @@ function renderClaims(containerId, claims) {
     for (const s of (c.sources || [])) {
       if (!s.url) continue;
       const domain = s.url.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
-      sourcesHtml += `<a class="source-chip" href="${escAttr(s.url)}" target="_blank">
+      sourcesHtml += `<a class="source-chip" href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer">
         <span class="stance-dot ${s.stance || 'neutral'}"></span>${escHtml(domain)}
       </a>`;
     }
@@ -762,7 +776,7 @@ function escHtml(s) {
 }
 function escAttr(s) {
   if (!s) return '';
-  return String(s).replace(/"/g, '&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 document.getElementById('article-input').addEventListener('keydown', function(e) {
@@ -812,7 +826,7 @@ dropZone.addEventListener('drop', e => {
 });
 
 async function runPhase1PDF() {
-  if (!selectedPdf) return;
+  if (!selectedPdf || _running) return;
 
   clearError();
   document.getElementById('analyze-btn-pdf').disabled = true;

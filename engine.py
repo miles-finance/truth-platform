@@ -4,29 +4,34 @@ Phase 1: Article extraction → opposing search → point/counterpoint summary
 Phase 2: Claim-level scoring with source strength analysis
 """
 
-import sys
 import json
+import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional
-import trafilatura
+
+import anthropic
 import requests
+import trafilatura
+
 try:
     from ddgs import DDGS
 except ImportError:
     from duckduckgo_search import DDGS
-import anthropic
 
 # Load Anthropic key — env var for prod, load_keys for local
-import os
 _api_key = os.environ.get("ANTHROPIC_API_KEY")
 if not _api_key:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from load_keys import anthropic_api_key
     _api_key = anthropic_api_key()
 
-CLIENT = anthropic.Anthropic(api_key=_api_key)
+CLIENT = anthropic.Anthropic(api_key=_api_key, timeout=60.0)
 MODEL = "claude-sonnet-4-6"
+
+# External call timeout (seconds)
+_FETCH_TIMEOUT = 30
 
 
 # ─── Article Extraction ────────────────────────────────────────────────────────
@@ -45,7 +50,6 @@ def extract_article(url_or_text: str) -> dict:
         )
         if not text:
             raise ValueError("Could not extract content from URL")
-        # Try to get title/metadata
         meta = trafilatura.extract_metadata(downloaded)
         title = meta.title if meta and meta.title else url_or_text[:80]
         source_url = url_or_text
@@ -55,7 +59,7 @@ def extract_article(url_or_text: str) -> dict:
         source_url = None
 
     return {
-        "text": text[:8000],  # cap for LLM
+        "text": text[:8000],
         "title": title,
         "source_url": source_url
     }
@@ -64,13 +68,13 @@ def extract_article(url_or_text: str) -> dict:
 # ─── Web Search ────────────────────────────────────────────────────────────────
 
 def search_web(query: str, max_results: int = 5) -> list[dict]:
-    """Search DuckDuckGo and return results."""
+    """Search DuckDuckGo and return results. Returns empty list on failure."""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         return results
-    except Exception as e:
-        return [{"title": f"Search error: {e}", "href": "", "body": ""}]
+    except Exception:
+        return []
 
 
 def fetch_article_text(url: str, max_chars: int = 4000) -> str:
@@ -101,12 +105,10 @@ def claude(prompt: str, system: str = None, max_tokens: int = 2048) -> str:
 def claude_json(prompt: str, system: str = None, max_tokens: int = 2048) -> dict | list:
     """Call Claude and parse JSON from response."""
     text = claude(prompt, system=system, max_tokens=max_tokens)
-    # Extract JSON from markdown code blocks if present
     match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if match:
         text = match.group(1)
     else:
-        # Try to find raw JSON object/array
         text = text.strip()
     return json.loads(text)
 
@@ -142,9 +144,8 @@ def find_opposing_article(article_analysis: dict, original_url: str = None) -> d
     # Filter out the original source
     filtered = [r for r in results if not original_url or original_url not in r.get("href", "")]
 
-    # Score results with Claude to pick the most diametrically opposed
     if not filtered:
-        return {"text": "No opposing content found.", "title": "No results", "source_url": None, "snippet": ""}
+        return {"text": "", "title": "No opposing article found", "source_url": None, "snippet": ""}
 
     snippets = "\n\n".join([
         f"[{i+1}] Title: {r.get('title','')}\nURL: {r.get('href','')}\nSnippet: {r.get('body','')[:300]}"
@@ -169,7 +170,6 @@ Respond with ONLY the number (e.g., "3")."""
     best = filtered[idx]
     url = best.get("href", "")
 
-    # Try to fetch full text
     full_text = fetch_article_text(url, max_chars=6000) if url else ""
     if not full_text:
         full_text = best.get("body", "")
@@ -236,6 +236,7 @@ TRUSTED_DOMAINS = {
 
 
 def classify_source(url: str) -> str:
+    """Classify a source URL by credibility tier."""
     if not url:
         return "unknown"
     url_lower = url.lower()
@@ -270,7 +271,6 @@ Return ONLY the JSON array."""
 
 def _detect_stance_from_snippet(claim: str, title: str, snippet: str) -> str:
     """Quick heuristic stance detection from snippet without Claude call."""
-    # Look for negation patterns
     negatives = ["not ", "no ", "fails", "wrong", "incorrect", "myth", "false", "debunk", "unlikely", "contradiction", "doesn't"]
     positives = ["confirms", "supports", "shows", "proves", "evidence", "study", "research", "demonstrates", "validates", "supports"]
 
@@ -302,7 +302,6 @@ def score_claim(claim: dict, article_context: str) -> dict:
         source_type = classify_source(url)
         strength = SOURCE_STRENGTH.get(source_type, 3)
 
-        # Quick heuristic stance detection (avoid expensive Claude calls)
         stance = _detect_stance_from_snippet(claim["claim"], title, snippet)
 
         if stance == "support":
@@ -326,31 +325,24 @@ def score_claim(claim: dict, article_context: str) -> dict:
     if n_sources == 0:
         score = 50  # unknown
     else:
-        # Base: % supporting weighted by strength
         max_possible = sum(SOURCE_STRENGTH[s["source_type"]] for s in sources)
         if max_possible > 0:
             raw_score = max(0, total_strength) / max_possible
         else:
             raw_score = 0.5
 
-        # Adjust for source count (more sources = more confident)
         coverage_bonus = min(n_sources / 5, 1.0) * 0.2
         score = int((raw_score * 0.8 + coverage_bonus) * 100)
         score = max(0, min(100, score))
 
-    # Credibility label
     if score >= 80:
-        label = "Well-Supported"
-        color = "green"
+        label, color = "Well-Supported", "green"
     elif score >= 60:
-        label = "Moderately Supported"
-        color = "yellow"
+        label, color = "Moderately Supported", "yellow"
     elif score >= 40:
-        label = "Mixed Evidence"
-        color = "orange"
+        label, color = "Mixed Evidence", "orange"
     else:
-        label = "Weakly Supported"
-        color = "red"
+        label, color = "Weakly Supported", "red"
 
     return {
         "claim": claim["claim"],
@@ -359,7 +351,7 @@ def score_claim(claim: dict, article_context: str) -> dict:
         "color": color,
         "supporting": supporting,
         "contradicting": contradicting,
-        "sources": sources[:4]  # top 4 sources
+        "sources": sources[:4]
     }
 
 
@@ -389,19 +381,24 @@ def score_all_claims(article: dict) -> list[dict]:
 
 def run_phase1(url_or_text: str) -> dict:
     """Run Phase 1: extract article, find opposing view, generate point/counterpoint."""
-    # Extract original article
     article_a = extract_article(url_or_text)
-
-    # Analyze thesis and find opposing search query
     analysis = analyze_article_thesis(article_a["text"], article_a["title"])
     article_a["analysis"] = analysis
 
-    # Find opposing article
     article_b = find_opposing_article(analysis, original_url=article_a.get("source_url"))
-    article_b["analysis"] = analyze_article_thesis(article_b["text"], article_b["title"])
 
-    # Generate point/counterpoint
-    point_counterpoint = generate_point_counterpoint(article_a, article_b)
+    # TP-025: Skip opposing analysis if no opposing article found
+    if article_b["text"]:
+        article_b["analysis"] = analyze_article_thesis(article_b["text"], article_b["title"])
+        point_counterpoint = generate_point_counterpoint(article_a, article_b)
+    else:
+        article_b["analysis"] = {"ideology_lean": "unknown"}
+        point_counterpoint = {
+            "article_a_summary": analysis.get("thesis", ""),
+            "article_b_summary": "No opposing article could be found.",
+            "core_disagreement": "Unable to determine — no opposing perspective found.",
+            "points": []
+        }
 
     return {
         "article_a": {
@@ -418,7 +415,6 @@ def run_phase1(url_or_text: str) -> dict:
         },
         "core_disagreement": point_counterpoint["core_disagreement"],
         "points": point_counterpoint["points"],
-        # Store full text for Phase 2
         "_article_a_text": article_a["text"],
         "_article_b_text": article_b["text"]
     }
@@ -435,10 +431,9 @@ def run_phase2(phase1_result: dict) -> dict:
         "title": phase1_result["article_b"]["title"]
     }
 
-    claims_a = score_all_claims(article_a)
-    claims_b = score_all_claims(article_b)
+    claims_a = score_all_claims(article_a) if article_a["text"] else []
+    claims_b = score_all_claims(article_b) if article_b["text"] else []
 
-    # Average scores
     avg_a = sum(c["score"] for c in claims_a) / len(claims_a) if claims_a else 0
     avg_b = sum(c["score"] for c in claims_b) / len(claims_b) if claims_b else 0
 

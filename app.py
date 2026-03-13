@@ -2,15 +2,22 @@
 Truth Platform — Flask Web App
 Endpoints:
   POST /api/analyze        — Phase 1: point/counterpoint
-  POST /api/score          — Phase 2: claim scoring (takes phase1 result)
-  POST /api/full           — Both phases in sequence (slow)
+  POST /api/score          — Phase 2: claim scoring (requires cache_key from phase 1)
+  POST /api/upload-pdf     — Extract text from PDF
+  GET  /health             — Health check
 """
 
-from flask import Flask, request, jsonify, render_template, Response
-import json
-import traceback
+import hashlib
 import io
+import json
+import secrets
+import time
+import traceback
+from threading import Lock
+
 import pypdf
+from flask import Flask, Response, jsonify, render_template, request
+
 from engine import run_phase1, run_phase2
 
 app = Flask(__name__)
@@ -20,6 +27,11 @@ app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max upload
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/analyze", methods=["POST"])
@@ -53,20 +65,17 @@ def analyze():
 
 @app.route("/api/score", methods=["POST"])
 def score():
-    """Phase 2: score claims. Accepts either a cache_key or the full phase1 result."""
+    """Phase 2: score claims. Requires cache_key from Phase 1."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "Missing request body"}), 400
 
-    # Reconstitute phase1 result
-    if "cache_key" in data:
-        phase1 = _load_phase1(data["cache_key"])
-        if not phase1:
-            return jsonify({"error": "Cache key not found — re-run analyze first"}), 404
-    elif "phase1" in data:
-        phase1 = data["phase1"]
-    else:
-        return jsonify({"error": "Provide 'cache_key' or 'phase1' result"}), 400
+    if "cache_key" not in data:
+        return jsonify({"error": "Missing 'cache_key'. Run /api/analyze first."}), 400
+
+    phase1 = _load_phase1(data["cache_key"])
+    if not phase1:
+        return jsonify({"error": "Cache key not found or expired — re-run analyze first"}), 404
 
     try:
         result = run_phase2(phase1)
@@ -77,34 +86,6 @@ def score():
         if "rate limit" in error_msg.lower():
             return jsonify({"error": "Rate limited by search or API. Try again in a moment."}), 429
         return jsonify({"error": f"Scoring error: {error_msg}"}), 500
-
-
-@app.route("/api/full", methods=["POST"])
-def full_analysis():
-    """Both phases — slower but complete. Streams progress."""
-    data = request.get_json()
-    if not data or "input" not in data:
-        return jsonify({"error": "Missing 'input' field"}), 400
-
-    def generate():
-        try:
-            yield f"data: {json.dumps({'status': 'phase1_start', 'message': 'Analyzing article and finding opposing view...'})}\n\n"
-            phase1 = run_phase1(data["input"])
-            clean1 = {k: v for k, v in phase1.items() if not k.startswith("_")}
-            clean1["cache_key"] = _store_phase1(phase1)
-            yield f"data: {json.dumps({'status': 'phase1_done', 'result': clean1})}\n\n"
-
-            yield f"data: {json.dumps({'status': 'phase2_start', 'message': 'Scoring claims with evidence...'})}\n\n"
-            phase2 = run_phase2(phase1)
-            yield f"data: {json.dumps({'status': 'phase2_done', 'result': phase2})}\n\n"
-
-            yield f"data: {json.dumps({'status': 'complete'})}\n\n"
-        except Exception as e:
-            traceback.print_exc()
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.route("/api/upload-pdf", methods=["POST"])
@@ -128,7 +109,6 @@ def upload_pdf():
         if not full_text.strip():
             return jsonify({"error": "Could not extract text from PDF. It may be image-based or encrypted."}), 422
 
-        # Cap at 50k chars (same as text input limit)
         full_text = full_text[:50000]
         return jsonify({
             "text": full_text,
@@ -142,22 +122,38 @@ def upload_pdf():
         return jsonify({"error": f"PDF extraction failed: {str(e)}"}), 500
 
 
-# ─── Simple in-memory cache for phase1 results ───────────────────────────────
-import hashlib, time
+# ─── Thread-safe in-memory cache ──────────────────────────────────────────────
 
 _PHASE1_CACHE = {}
+_CACHE_LOCK = Lock()
+_CACHE_MAX = 50
+
 
 def _store_phase1(result: dict) -> str:
-    key = hashlib.md5(f"{time.time()}".encode()).hexdigest()[:8]
-    _PHASE1_CACHE[key] = result
-    # Keep cache small
-    if len(_PHASE1_CACHE) > 50:
-        oldest = list(_PHASE1_CACHE.keys())[0]
-        del _PHASE1_CACHE[oldest]
+    """Store phase1 result and return a unique cache key."""
+    key = secrets.token_hex(6)
+    with _CACHE_LOCK:
+        _PHASE1_CACHE[key] = {"data": result, "ts": time.time()}
+        # Evict oldest if over limit
+        if len(_PHASE1_CACHE) > _CACHE_MAX:
+            oldest_key = min(_PHASE1_CACHE, key=lambda k: _PHASE1_CACHE[k]["ts"])
+            del _PHASE1_CACHE[oldest_key]
     return key
 
+
 def _load_phase1(key: str) -> dict | None:
-    return _PHASE1_CACHE.get(key)
+    """Load phase1 result by cache key. Returns None if not found or expired (30 min)."""
+    with _CACHE_LOCK:
+        entry = _PHASE1_CACHE.get(key)
+        if not entry:
+            return None
+        # Expire after 30 minutes
+        if time.time() - entry["ts"] > 1800:
+            del _PHASE1_CACHE[key]
+            return None
+        # Touch for LRU
+        entry["ts"] = time.time()
+        return entry["data"]
 
 
 if __name__ == "__main__":
