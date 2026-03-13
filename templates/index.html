@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Truth Platform</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232635;
+    --border: #2e3148;
+    --text: #e8e9f0;
+    --muted: #7a7f99;
+    --accent: #6c8ef0;
+    --green: #4caf7d;
+    --yellow: #f0c040;
+    --orange: #f07840;
+    --red: #e05555;
+    --gray: #7a7f99;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+
+  .container { max-width: 960px; margin: 0 auto; }
+
+  /* Header */
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--muted); margin-top: 8px; font-size: 0.9rem; }
+
+  /* Input */
+  .input-area {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 32px;
+  }
+  .input-area label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .input-row { display: flex; gap: 10px; }
+  .input-row input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row input::placeholder { color: var(--muted); }
+
+  .btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: opacity 0.2s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .phase-btns { display: flex; gap: 8px; margin-top: 10px; font-size: 0.8rem; color: var(--muted); align-items: center; }
+  .phase-btns span { margin-right: 4px; }
+
+  /* Status */
+  .status-bar {
+    display: none;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+    color: var(--muted);
+    align-items: center;
+    gap: 10px;
+  }
+  .status-bar.visible { display: flex; }
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Error */
+  .error-box {
+    display: none;
+    background: #2a1818;
+    border: 1px solid #5a2222;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 24px;
+    color: var(--red);
+    font-size: 0.9rem;
+  }
+  .error-box.visible { display: block; }
+
+  /* Results */
+  #results { display: none; }
+  #results.visible { display: block; }
+
+  /* Phase 1 */
+  .phase-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 20px;
+  }
+  .phase-badge {
+    background: var(--accent);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .phase-header h2 { font-size: 1.1rem; font-weight: 600; }
+
+  .core-disagreement {
+    background: var(--surface2);
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .core-disagreement strong { color: var(--text); }
+
+  .articles-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 640px) { .articles-grid { grid-template-columns: 1fr; } }
+
+  .article-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .article-card .label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .article-card .title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    line-height: 1.3;
+  }
+  .article-card .title a { color: var(--accent); text-decoration: none; }
+  .article-card .title a:hover { text-decoration: underline; }
+  .article-card .lean-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .article-card .summary { font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+
+  /* Points table */
+  .points-table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+  .points-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    padding: 8px 12px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .points-table th:first-child { border-radius: 8px 0 0 0; }
+  .points-table th:last-child { border-radius: 0 8px 0 0; }
+  .points-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .points-table tr:last-child td { border-bottom: none; }
+  .points-table tr:hover td { background: var(--surface2); }
+  .points-table .topic-cell {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 0.8rem;
+  }
+  .points-table .pos-cell { color: var(--muted); }
+
+  /* Phase 2 */
+  .claims-section { margin-bottom: 32px; }
+  .claims-section h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .credibility-score {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 0.8rem;
+    color: var(--text);
+  }
+
+  .claim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .claim-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .score-pill {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+  .score-pill.green { background: #1a3328; color: var(--green); }
+  .score-pill.yellow { background: #332d14; color: var(--yellow); }
+  .score-pill.orange { background: #33251a; color: var(--orange); }
+  .score-pill.red { background: #2a1818; color: var(--red); }
+  .score-pill.gray { background: var(--surface2); color: var(--muted); }
+
+  .claim-text { font-size: 0.88rem; color: var(--text); flex: 1; }
+  .claim-label { font-size: 0.75rem; color: var(--muted); }
+
+  .score-bar-wrap { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .score-bar-bg {
+    flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .score-bar-fill { height: 100%; border-radius: 2px; transition: width 0.8s ease; }
+
+  .claim-sources { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .source-chip {
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 240px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .source-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .source-chip .stance-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+  .stance-dot.support { background: var(--green); }
+  .stance-dot.contradict { background: var(--red); }
+  .stance-dot.neutral { background: var(--muted); }
+
+  /* Score phase 2 button */
+  #phase2-section { margin-top: 8px; }
+  #score-btn-wrap { text-align: center; padding: 20px 0; }
+  #phase2-loading { display: none; text-align: center; padding: 20px 0; color: var(--muted); font-size: 0.9rem; }
+  #phase2-results { display: none; }
+
+  /* Divider */
+  .divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Truth <span>Platform</span></h1>
+    <p>Submit an article → get the strongest opposing argument → score every claim with evidence</p>
+  </header>
+
+  <div class="input-area">
+    <label>Article URL or paste text</label>
+    <div class="input-row">
+      <input type="text" id="article-input" placeholder="https://example.com/article or paste article text here...">
+      <button class="btn btn-primary" id="analyze-btn" onclick="runPhase1()">Analyze</button>
+    </div>
+    <div class="phase-btns">
+      <span>→</span> Phase 1: point/counterpoint &nbsp;|&nbsp; Phase 2: evidence scoring per claim
+    </div>
+  </div>
+
+  <div class="status-bar" id="status-bar">
+    <div class="spinner"></div>
+    <span id="status-msg">Analyzing...</span>
+  </div>
+
+  <div class="error-box" id="error-box"></div>
+
+  <div id="results">
+    <!-- Phase 1 -->
+    <div class="phase-header">
+      <span class="phase-badge">Phase 1</span>
+      <h2>Point / Counterpoint</h2>
+    </div>
+
+    <div class="core-disagreement" id="core-disagreement"></div>
+
+    <div class="articles-grid">
+      <div class="article-card" id="card-a">
+        <div class="label">Article A — Original</div>
+        <div class="title" id="title-a"></div>
+        <div class="lean-badge" id="lean-a"></div>
+        <div class="summary" id="summary-a"></div>
+      </div>
+      <div class="article-card" id="card-b">
+        <div class="label">Article B — Opposing View</div>
+        <div class="title" id="title-b"></div>
+        <div class="lean-badge" id="lean-b"></div>
+        <div class="summary" id="summary-b"></div>
+      </div>
+    </div>
+
+    <table class="points-table" id="points-table">
+      <thead>
+        <tr>
+          <th style="width:18%">Topic</th>
+          <th>Article A</th>
+          <th>Article B</th>
+        </tr>
+      </thead>
+      <tbody id="points-tbody"></tbody>
+    </table>
+
+    <hr class="divider">
+
+    <!-- Phase 2 trigger -->
+    <div id="phase2-section">
+      <div class="phase-header">
+        <span class="phase-badge">Phase 2</span>
+        <h2>Claim Evidence Scoring</h2>
+      </div>
+      <div id="score-btn-wrap">
+        <button class="btn btn-primary" onclick="runPhase2()">Score All Claims</button>
+        <p style="margin-top:8px; font-size:0.8rem; color:var(--muted)">Searches for supporting/contradicting research for every claim (takes ~60s)</p>
+      </div>
+      <div id="phase2-loading">
+        <div class="spinner" style="display:inline-block; margin-right:8px"></div>
+        Searching for evidence per claim... this takes 30-90 seconds
+      </div>
+      <div id="phase2-results">
+        <div class="claims-section">
+          <h3>
+            Article A Claims
+            <span class="credibility-score" id="score-a-overall"></span>
+          </h3>
+          <div id="claims-a"></div>
+        </div>
+        <div class="claims-section">
+          <h3>
+            Article B Claims
+            <span class="credibility-score" id="score-b-overall"></span>
+          </h3>
+          <div id="claims-b"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let cacheKey = null;
+
+function setStatus(msg) {
+  const bar = document.getElementById('status-bar');
+  bar.classList.add('visible');
+  document.getElementById('status-msg').textContent = msg;
+}
+function clearStatus() {
+  document.getElementById('status-bar').classList.remove('visible');
+}
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = msg;
+  box.classList.add('visible');
+}
+function clearError() {
+  document.getElementById('error-box').classList.remove('visible');
+}
+
+async function runPhase1() {
+  const input = document.getElementById('article-input').value.trim();
+  if (!input) return;
+
+  clearError();
+  document.getElementById('results').classList.remove('visible');
+  document.getElementById('analyze-btn').disabled = true;
+  setStatus('Extracting article and finding opposing view...');
+
+  try {
+    const resp = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({input})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Server error');
+
+    cacheKey = data.cache_key;
+    renderPhase1(data);
+    document.getElementById('results').classList.add('visible');
+  } catch(e) {
+    showError('Error: ' + e.message);
+  } finally {
+    clearStatus();
+    document.getElementById('analyze-btn').disabled = false;
+  }
+}
+
+function renderPhase1(data) {
+  // Core disagreement
+  const cd = document.getElementById('core-disagreement');
+  cd.innerHTML = '<strong>Core Disagreement:</strong> ' + escHtml(data.core_disagreement);
+
+  // Article A
+  const aUrl = data.article_a.source_url;
+  document.getElementById('title-a').innerHTML = aUrl
+    ? `<a href="${aUrl}" target="_blank">${escHtml(data.article_a.title)}</a>`
+    : escHtml(data.article_a.title);
+  document.getElementById('lean-a').textContent = data.article_a.ideology_lean || 'unknown';
+  document.getElementById('summary-a').textContent = data.article_a.summary;
+
+  // Article B
+  const bUrl = data.article_b.source_url;
+  document.getElementById('title-b').innerHTML = bUrl
+    ? `<a href="${bUrl}" target="_blank">${escHtml(data.article_b.title)}</a>`
+    : escHtml(data.article_b.title);
+  document.getElementById('lean-b').textContent = data.article_b.ideology_lean || 'unknown';
+  document.getElementById('summary-b').textContent = data.article_b.summary;
+
+  // Points
+  const tbody = document.getElementById('points-tbody');
+  tbody.innerHTML = '';
+  for (const p of (data.points || [])) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="topic-cell">${escHtml(p.topic)}</td>
+      <td class="pos-cell">${escHtml(p.article_a_position)}</td>
+      <td class="pos-cell">${escHtml(p.article_b_position)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Reset phase2 state
+  document.getElementById('score-btn-wrap').style.display = 'block';
+  document.getElementById('phase2-loading').style.display = 'none';
+  document.getElementById('phase2-results').style.display = 'none';
+}
+
+async function runPhase2() {
+  if (!cacheKey) return;
+  document.getElementById('score-btn-wrap').style.display = 'none';
+  document.getElementById('phase2-loading').style.display = 'block';
+  clearError();
+
+  try {
+    const resp = await fetch('/api/score', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cache_key: cacheKey})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Server error');
+
+    renderPhase2(data);
+    document.getElementById('phase2-loading').style.display = 'none';
+    document.getElementById('phase2-results').style.display = 'block';
+  } catch(e) {
+    document.getElementById('phase2-loading').style.display = 'none';
+    document.getElementById('score-btn-wrap').style.display = 'block';
+    showError('Scoring error: ' + e.message);
+  }
+}
+
+function renderPhase2(data) {
+  document.getElementById('score-a-overall').textContent =
+    'Overall: ' + data.article_a_credibility_score + '/100';
+  document.getElementById('score-b-overall').textContent =
+    'Overall: ' + data.article_b_credibility_score + '/100';
+
+  renderClaims('claims-a', data.article_a_claims);
+  renderClaims('claims-b', data.article_b_claims);
+}
+
+function renderClaims(containerId, claims) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  for (const c of claims) {
+    const card = document.createElement('div');
+    card.className = 'claim-card';
+
+    const colorClass = c.color || 'gray';
+    const barColor = {
+      green: '#4caf7d', yellow: '#f0c040', orange: '#f07840', red: '#e05555', gray: '#7a7f99'
+    }[colorClass] || '#7a7f99';
+
+    let sourcesHtml = '';
+    for (const s of (c.sources || [])) {
+      if (!s.url) continue;
+      const domain = s.url.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
+      sourcesHtml += `<a class="source-chip" href="${escAttr(s.url)}" target="_blank">
+        <span class="stance-dot ${s.stance || 'neutral'}"></span>${escHtml(domain)}
+      </a>`;
+    }
+
+    card.innerHTML = `
+      <div class="claim-header">
+        <span class="score-pill ${colorClass}">${c.score}/100</span>
+        <span class="claim-text">${escHtml(c.claim)}</span>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-bg">
+          <div class="score-bar-fill" style="width:${c.score}%; background:${barColor}"></div>
+        </div>
+        <span class="claim-label">${c.label} · ${c.supporting} supporting, ${c.contradicting} contradicting</span>
+      </div>
+      ${sourcesHtml ? `<div class="claim-sources">${sourcesHtml}</div>` : ''}
+    `;
+    el.appendChild(card);
+  }
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) {
+  if (!s) return '';
+  return String(s).replace(/"/g, '&quot;');
+}
+
+// Allow Enter key to submit
+document.getElementById('article-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') runPhase1();
+});
+</script>
+</body>
+</html>
