@@ -9,9 +9,12 @@ Endpoints:
 from flask import Flask, request, jsonify, render_template, Response
 import json
 import traceback
+import io
+import pypdf
 from engine import run_phase1, run_phase2
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB max upload
 
 
 @app.route("/")
@@ -26,16 +29,26 @@ def analyze():
     if not data or "input" not in data:
         return jsonify({"error": "Missing 'input' field (URL or article text)"}), 400
 
+    user_input = str(data["input"]).strip()
+    is_url = user_input.startswith("http://") or user_input.startswith("https://")
+    if not is_url and len(user_input) < 20:
+        return jsonify({"error": "Input too short. Provide a URL or at least 20 characters of article text."}), 400
+    if len(user_input) > 50000:
+        return jsonify({"error": "Input too long. Max 50,000 characters."}), 400
+
     try:
-        result = run_phase1(data["input"])
-        # Don't expose internal text blobs in the API response
+        result = run_phase1(user_input)
         clean = {k: v for k, v in result.items() if not k.startswith("_")}
-        # But stash the raw texts under a separate key for the /api/score call
         clean["cache_key"] = _store_phase1(result)
         return jsonify(clean)
+    except ValueError as e:
+        return jsonify({"error": f"Invalid input: {str(e)}"}), 400
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower():
+            return jsonify({"error": "Rate limited. Try again in a moment."}), 429
+        return jsonify({"error": f"Analysis error: {error_msg}"}), 500
 
 
 @app.route("/api/score", methods=["POST"])
@@ -60,7 +73,10 @@ def score():
         return jsonify(result)
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower():
+            return jsonify({"error": "Rate limited by search or API. Try again in a moment."}), 429
+        return jsonify({"error": f"Scoring error: {error_msg}"}), 500
 
 
 @app.route("/api/full", methods=["POST"])
@@ -91,6 +107,41 @@ def full_analysis():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.route("/api/upload-pdf", methods=["POST"])
+def upload_pdf():
+    """Extract text from an uploaded PDF and return it."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded. Send a multipart form with field 'file'."}), 400
+
+    f = request.files["file"]
+    if not f.filename or not f.filename.lower().endswith(".pdf"):
+        return jsonify({"error": "File must be a PDF (.pdf)"}), 400
+
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(f.read()))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text.strip())
+        full_text = "\n\n".join(pages)
+        if not full_text.strip():
+            return jsonify({"error": "Could not extract text from PDF. It may be image-based or encrypted."}), 422
+
+        # Cap at 50k chars (same as text input limit)
+        full_text = full_text[:50000]
+        return jsonify({
+            "text": full_text,
+            "page_count": len(reader.pages),
+            "char_count": len(full_text)
+        })
+    except pypdf.errors.PdfReadError as e:
+        return jsonify({"error": f"Invalid or corrupted PDF: {str(e)}"}), 422
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"PDF extraction failed: {str(e)}"}), 500
+
+
 # ─── Simple in-memory cache for phase1 results ───────────────────────────────
 import hashlib, time
 
@@ -110,6 +161,4 @@ def _load_phase1(key: str) -> dict | None:
 
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5555))
-    app.run(debug=False, port=port, host="0.0.0.0")
+    app.run(debug=True, port=5555, host="0.0.0.0")

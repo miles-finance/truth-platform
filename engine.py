@@ -17,18 +17,11 @@ except ImportError:
     from duckduckgo_search import DDGS
 import anthropic
 
-# Load Anthropic key — env var first (Railway), then local load_keys fallback
-import os
-_api_key = os.environ.get("ANTHROPIC_API_KEY")
-if not _api_key:
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent / "agent-misc"))
-        from load_keys import anthropic_api_key
-        _api_key = anthropic_api_key()
-    except Exception:
-        raise RuntimeError("ANTHROPIC_API_KEY env var not set and load_keys fallback failed")
+# Load Anthropic key
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from load_keys import anthropic_api_key
 
-CLIENT = anthropic.Anthropic(api_key=_api_key)
+CLIENT = anthropic.Anthropic(api_key=anthropic_api_key())
 MODEL = "claude-sonnet-4-6"
 
 
@@ -271,6 +264,24 @@ Return ONLY the JSON array."""
     return claude_json(prompt, system="You extract specific, verifiable factual claims. Return ONLY valid JSON.")
 
 
+def _detect_stance_from_snippet(claim: str, title: str, snippet: str) -> str:
+    """Quick heuristic stance detection from snippet without Claude call."""
+    # Look for negation patterns
+    negatives = ["not ", "no ", "fails", "wrong", "incorrect", "myth", "false", "debunk", "unlikely", "contradiction", "doesn't"]
+    positives = ["confirms", "supports", "shows", "proves", "evidence", "study", "research", "demonstrates", "validates", "supports"]
+
+    snippet_lower = (title + " " + snippet).lower()
+
+    neg_count = sum(1 for neg in negatives if neg in snippet_lower)
+    pos_count = sum(1 for pos in positives if pos in snippet_lower)
+
+    if neg_count > pos_count:
+        return "contradict"
+    elif pos_count > neg_count:
+        return "support"
+    return "neutral"
+
+
 def score_claim(claim: dict, article_context: str) -> dict:
     """Search for evidence and score a single claim."""
     results = search_web(claim["search_query"], max_results=6)
@@ -287,24 +298,15 @@ def score_claim(claim: dict, article_context: str) -> dict:
         source_type = classify_source(url)
         strength = SOURCE_STRENGTH.get(source_type, 3)
 
-        # Ask Claude if this source supports or contradicts the claim
-        stance_prompt = f"""Claim: "{claim['claim']}"
+        # Quick heuristic stance detection (avoid expensive Claude calls)
+        stance = _detect_stance_from_snippet(claim["claim"], title, snippet)
 
-Source title: {title}
-Source snippet: {snippet[:400]}
-
-Does this source SUPPORT or CONTRADICT the claim? Answer with one word: "support", "contradict", or "neutral"."""
-
-        try:
-            stance = claude(stance_prompt, max_tokens=10).strip().lower()
-            if "support" in stance:
-                supporting += 1
-                total_strength += strength
-            elif "contradict" in stance:
-                contradicting += 1
-                total_strength -= strength // 2
-        except Exception:
-            stance = "neutral"
+        if stance == "support":
+            supporting += 1
+            total_strength += strength
+        elif stance == "contradict":
+            contradicting += 1
+            total_strength -= strength // 2
 
         sources.append({
             "url": url,

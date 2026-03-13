@@ -62,6 +62,57 @@
   .input-row input:focus { border-color: var(--accent); }
   .input-row input::placeholder { color: var(--muted); }
 
+  /* Input mode tabs */
+  .input-tabs { display: flex; gap: 0; margin-bottom: 14px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); width: fit-content; }
+  .input-tab {
+    padding: 6px 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: var(--surface2);
+    color: var(--muted);
+    cursor: pointer;
+    border: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .input-tab.active { background: var(--accent); color: white; }
+  .input-tab:not(.active):hover { background: var(--border); color: var(--text); }
+
+  /* PDF drop zone */
+  .pdf-drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--surface2);
+  }
+  .pdf-drop-zone:hover, .pdf-drop-zone.drag-over {
+    border-color: var(--accent);
+    background: #1e2236;
+  }
+  .pdf-drop-zone .drop-icon { font-size: 2rem; margin-bottom: 8px; }
+  .pdf-drop-zone .drop-label { font-size: 0.9rem; color: var(--muted); }
+  .pdf-drop-zone .drop-sub { font-size: 0.78rem; color: var(--muted); margin-top: 4px; opacity: 0.7; }
+  .pdf-drop-zone input[type="file"] { display: none; }
+
+  /* PDF selected state */
+  .pdf-selected {
+    display: none;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .pdf-selected.visible { display: flex; }
+  .pdf-selected .pdf-name { flex: 1; font-size: 0.9rem; font-weight: 500; }
+  .pdf-selected .pdf-size { font-size: 0.78rem; color: var(--muted); }
+  .pdf-remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0; line-height: 1; }
+  .pdf-remove:hover { color: var(--red); }
+
   .btn {
     padding: 10px 20px;
     border-radius: 8px;
@@ -314,12 +365,41 @@
   </header>
 
   <div class="input-area">
-    <label>Article URL or paste text</label>
-    <div class="input-row">
-      <input type="text" id="article-input" placeholder="https://example.com/article or paste article text here...">
-      <button class="btn btn-primary" id="analyze-btn" onclick="runPhase1()">Analyze</button>
+    <div class="input-tabs">
+      <button class="input-tab active" id="tab-text" onclick="switchTab('text')">URL / Text</button>
+      <button class="input-tab" id="tab-pdf" onclick="switchTab('pdf')">PDF</button>
     </div>
-    <div class="phase-btns">
+
+    <!-- URL/Text mode -->
+    <div id="mode-text">
+      <label>Article URL or paste text</label>
+      <div class="input-row">
+        <input type="text" id="article-input" placeholder="https://example.com/article or paste article text here...">
+        <button class="btn btn-primary" id="analyze-btn" onclick="runPhase1()">Analyze</button>
+      </div>
+    </div>
+
+    <!-- PDF mode -->
+    <div id="mode-pdf" style="display:none">
+      <label>Upload PDF article</label>
+      <div class="pdf-drop-zone" id="pdf-drop-zone" onclick="document.getElementById('pdf-file-input').click()">
+        <div class="drop-icon">📄</div>
+        <div class="drop-label">Click to select or drag & drop a PDF</div>
+        <div class="drop-sub">Max 20MB</div>
+        <input type="file" id="pdf-file-input" accept=".pdf" onchange="onPdfSelected(this.files[0])">
+      </div>
+      <div class="pdf-selected" id="pdf-selected">
+        <span style="font-size:1.2rem">📄</span>
+        <span class="pdf-name" id="pdf-name"></span>
+        <span class="pdf-size" id="pdf-size"></span>
+        <button class="pdf-remove" onclick="clearPdf()" title="Remove">✕</button>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn btn-primary" id="analyze-btn-pdf" onclick="runPhase1PDF()" disabled>Analyze PDF</button>
+      </div>
+    </div>
+
+    <div class="phase-btns" style="margin-top:10px">
       <span>→</span> Phase 1: point/counterpoint &nbsp;|&nbsp; Phase 2: evidence scoring per claim
     </div>
   </div>
@@ -379,8 +459,16 @@
         <p style="margin-top:8px; font-size:0.8rem; color:var(--muted)">Searches for supporting/contradicting research for every claim (takes ~60s)</p>
       </div>
       <div id="phase2-loading">
-        <div class="spinner" style="display:inline-block; margin-right:8px"></div>
-        Searching for evidence per claim... this takes 30-90 seconds
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="spinner" style="display:inline-block"></div>
+          <div>
+            <div style="font-weight:600">Scoring claims with evidence...</div>
+            <div style="font-size:0.85rem; color:var(--muted); margin-top:4px">
+              This takes ~1-2 minutes (searching 5+ sources per claim)
+            </div>
+            <div id="phase2-progress" style="font-size:0.8rem; color:var(--muted); margin-top:8px">Preparing...</div>
+          </div>
+        </div>
       </div>
       <div id="phase2-results">
         <div class="claims-section">
@@ -577,6 +665,86 @@ function escAttr(s) {
 document.getElementById('article-input').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') runPhase1();
 });
+
+// ─── Tab switching ────────────────────────────────────────────────────────────
+function switchTab(mode) {
+  document.getElementById('mode-text').style.display = mode === 'text' ? 'block' : 'none';
+  document.getElementById('mode-pdf').style.display = mode === 'pdf' ? 'block' : 'none';
+  document.getElementById('tab-text').classList.toggle('active', mode === 'text');
+  document.getElementById('tab-pdf').classList.toggle('active', mode === 'pdf');
+}
+
+// ─── PDF upload ───────────────────────────────────────────────────────────────
+let selectedPdf = null;
+
+function onPdfSelected(file) {
+  if (!file) return;
+  selectedPdf = file;
+  document.getElementById('pdf-name').textContent = file.name;
+  document.getElementById('pdf-size').textContent = (file.size / 1024 / 1024).toFixed(1) + ' MB';
+  document.getElementById('pdf-selected').classList.add('visible');
+  document.getElementById('analyze-btn-pdf').disabled = false;
+}
+
+function clearPdf() {
+  selectedPdf = null;
+  document.getElementById('pdf-file-input').value = '';
+  document.getElementById('pdf-selected').classList.remove('visible');
+  document.getElementById('analyze-btn-pdf').disabled = true;
+}
+
+// Drag and drop
+const dropZone = document.getElementById('pdf-drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.toLowerCase().endsWith('.pdf')) {
+    onPdfSelected(file);
+  } else {
+    showError('Please drop a PDF file.');
+  }
+});
+
+async function runPhase1PDF() {
+  if (!selectedPdf) return;
+
+  clearError();
+  document.getElementById('results').classList.remove('visible');
+  document.getElementById('analyze-btn-pdf').disabled = true;
+  setStatus('Extracting text from PDF...');
+
+  try {
+    // Step 1: upload PDF, get text back
+    const formData = new FormData();
+    formData.append('file', selectedPdf);
+    const uploadResp = await fetch('/api/upload-pdf', { method: 'POST', body: formData });
+    const uploadData = await uploadResp.json();
+    if (!uploadResp.ok) throw new Error(uploadData.error || 'PDF extraction failed');
+
+    setStatus(`Analyzing article (${uploadData.page_count} pages, ${uploadData.char_count.toLocaleString()} chars)...`);
+
+    // Step 2: run analyze with the extracted text
+    const resp = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({input: uploadData.text})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Server error');
+
+    cacheKey = data.cache_key;
+    renderPhase1(data);
+    document.getElementById('results').classList.add('visible');
+  } catch(e) {
+    showError('Error: ' + e.message);
+  } finally {
+    clearStatus();
+    document.getElementById('analyze-btn-pdf').disabled = false;
+  }
+}
 </script>
 </body>
 </html>
