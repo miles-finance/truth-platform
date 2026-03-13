@@ -17,11 +17,15 @@ except ImportError:
     from duckduckgo_search import DDGS
 import anthropic
 
-# Load Anthropic key
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from load_keys import anthropic_api_key
+# Load Anthropic key — env var for prod, load_keys for local
+import os
+_api_key = os.environ.get("ANTHROPIC_API_KEY")
+if not _api_key:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from load_keys import anthropic_api_key
+    _api_key = anthropic_api_key()
 
-CLIENT = anthropic.Anthropic(api_key=anthropic_api_key())
+CLIENT = anthropic.Anthropic(api_key=_api_key)
 MODEL = "claude-sonnet-4-6"
 
 
