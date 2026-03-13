@@ -130,24 +130,53 @@
   .phase-btns { display: flex; gap: 8px; margin-top: 10px; font-size: 0.8rem; color: var(--muted); align-items: center; }
   .phase-btns span { margin-right: 4px; }
 
-  /* Status */
-  .status-bar {
+  /* Progress bar */
+  .progress-area {
     display: none;
-    background: var(--surface2);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 16px 20px;
     margin-bottom: 24px;
-    font-size: 0.9rem;
-    color: var(--muted);
-    align-items: center;
-    gap: 10px;
   }
-  .status-bar.visible { display: flex; }
+  .progress-area.visible { display: block; }
+  .progress-top {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .progress-label { font-size: 0.88rem; color: var(--text); font-weight: 500; }
+  .progress-pct { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .progress-track {
+    height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .progress-fill {
+    height: 100%; width: 0%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), #8faaff);
+    transition: width 0.4s ease;
+  }
+  .progress-steps {
+    display: flex; gap: 0; position: relative;
+  }
+  .progress-step {
+    flex: 1; text-align: center; font-size: 0.68rem; color: var(--muted);
+    padding-top: 6px; position: relative; transition: color 0.3s;
+  }
+  .progress-step::before {
+    content: '';
+    display: block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--border);
+    margin: 0 auto 4px; transition: background 0.3s;
+  }
+  .progress-step.active { color: var(--accent); }
+  .progress-step.active::before { background: var(--accent); }
+  .progress-step.done { color: var(--green); }
+  .progress-step.done::before { background: var(--green); }
   .spinner {
     width: 16px; height: 16px; border: 2px solid var(--border);
     border-top-color: var(--accent); border-radius: 50%;
     animation: spin 0.8s linear infinite; flex-shrink: 0;
+    display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -347,10 +376,7 @@
   .stance-dot.contradict { background: var(--red); }
   .stance-dot.neutral { background: var(--muted); }
 
-  /* Score phase 2 button */
   #phase2-section { margin-top: 8px; }
-  #score-btn-wrap { text-align: center; padding: 20px 0; }
-  #phase2-loading { display: none; text-align: center; padding: 20px 0; color: var(--muted); font-size: 0.9rem; }
   #phase2-results { display: none; }
 
   /* Divider */
@@ -375,7 +401,7 @@
       <label>Article URL or paste text</label>
       <div class="input-row">
         <input type="text" id="article-input" placeholder="https://example.com/article or paste article text here...">
-        <button class="btn btn-primary" id="analyze-btn" onclick="runPhase1()">Analyze</button>
+        <button class="btn btn-primary" id="analyze-btn" onclick="runAnalyze()">Analyze</button>
       </div>
     </div>
 
@@ -404,9 +430,22 @@
     </div>
   </div>
 
-  <div class="status-bar" id="status-bar">
-    <div class="spinner"></div>
-    <span id="status-msg">Analyzing...</span>
+  <div class="progress-area" id="progress-area">
+    <div class="progress-top">
+      <span class="progress-label" id="progress-label">Analyzing...</span>
+      <span class="progress-pct" id="progress-pct">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <div class="progress-steps">
+      <div class="progress-step" id="pstep-0">Fetch</div>
+      <div class="progress-step" id="pstep-1">Opposing View</div>
+      <div class="progress-step" id="pstep-2">Analysis</div>
+      <div class="progress-step" id="pstep-3">Claims</div>
+      <div class="progress-step" id="pstep-4">Evidence</div>
+      <div class="progress-step" id="pstep-5">Done</div>
+    </div>
   </div>
 
   <div class="error-box" id="error-box"></div>
@@ -448,27 +487,11 @@
 
     <hr class="divider">
 
-    <!-- Phase 2 trigger -->
+    <!-- Phase 2 (auto-starts after Phase 1) -->
     <div id="phase2-section">
       <div class="phase-header">
         <span class="phase-badge">Phase 2</span>
         <h2>Claim Evidence Scoring</h2>
-      </div>
-      <div id="score-btn-wrap">
-        <button class="btn btn-primary" onclick="runPhase2()">Score All Claims</button>
-        <p style="margin-top:8px; font-size:0.8rem; color:var(--muted)">Searches for supporting/contradicting research for every claim (takes ~60s)</p>
-      </div>
-      <div id="phase2-loading">
-        <div style="display:flex; align-items:center; gap:12px">
-          <div class="spinner" style="display:inline-block"></div>
-          <div>
-            <div style="font-weight:600">Scoring claims with evidence...</div>
-            <div style="font-size:0.85rem; color:var(--muted); margin-top:4px">
-              This takes ~1-2 minutes (searching 5+ sources per claim)
-            </div>
-            <div id="phase2-progress" style="font-size:0.8rem; color:var(--muted); margin-top:8px">Preparing...</div>
-          </div>
-        </div>
       </div>
       <div id="phase2-results">
         <div class="claims-section">
@@ -493,14 +516,99 @@
 <script>
 let cacheKey = null;
 
-function setStatus(msg) {
-  const bar = document.getElementById('status-bar');
-  bar.classList.add('visible');
-  document.getElementById('status-msg').textContent = msg;
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+// Steps: 0=Fetch, 1=Opposing View, 2=Analysis, 3=Claims, 4=Evidence, 5=Done
+// Phase 1: steps 0-2, pct 0→50. Phase 2: steps 3-5, pct 50→100.
+const STEPS = [
+  { pct: 0,   label: 'Fetching article...' },
+  { pct: 18,  label: 'Finding opposing view...' },
+  { pct: 34,  label: 'Generating analysis...' },
+  { pct: 50,  label: 'Extracting claims...' },
+  { pct: 68,  label: 'Searching for evidence...' },
+  { pct: 84,  label: 'Scoring claims...' },
+];
+
+let _progInterval = null;
+let _progStart = null;
+let _progPhase = 0; // 0=phase1, 1=phase2
+
+function startProgress() {
+  document.getElementById('progress-area').classList.add('visible');
+  document.getElementById('results').classList.remove('visible');
+  _setAllSteps('');
+  _progPhase = 0;
+  _progStart = Date.now();
+  _tickProgress();
+  clearInterval(_progInterval);
+  _progInterval = setInterval(_tickProgress, 200);
 }
-function clearStatus() {
-  document.getElementById('status-bar').classList.remove('visible');
+
+function _tickProgress() {
+  const elapsed = Date.now() - _progStart;
+  // Phase 1: 30s budget for 0→50%, Phase 2: 30s budget for 50→100%
+  const budget = 30000;
+  const startPct = _progPhase === 0 ? 0 : 50;
+  const endPct = _progPhase === 0 ? 50 : 100;
+  const frac = Math.min(elapsed / budget, 0.97);
+  const pct = startPct + (endPct - startPct) * frac;
+  _applyProgress(pct);
 }
+
+function _applyProgress(pct) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent = Math.round(pct) + '%';
+
+  // Find current step and label
+  let activeIdx = 0;
+  for (let i = 0; i < STEPS.length; i++) {
+    if (pct >= STEPS[i].pct) activeIdx = i;
+  }
+  document.getElementById('progress-label').textContent = STEPS[activeIdx].label;
+
+  // Update step dots
+  for (let i = 0; i < 6; i++) {
+    const el = document.getElementById('pstep-' + i);
+    if (pct >= STEPS[Math.min(i + 1, 5)].pct || (i === 5 && pct >= 100)) {
+      el.className = 'progress-step done';
+    } else if (i === activeIdx) {
+      el.className = 'progress-step active';
+    } else {
+      el.className = 'progress-step';
+    }
+  }
+}
+
+function advanceToPhase2() {
+  _progPhase = 1;
+  _progStart = Date.now();
+  _applyProgress(50); // snap to 50%
+}
+
+function completeProgress() {
+  clearInterval(_progInterval);
+  _applyProgress(100);
+  document.getElementById('progress-label').textContent = 'Analysis complete';
+  // Mark all steps done
+  for (let i = 0; i < 6; i++) {
+    document.getElementById('pstep-' + i).className = 'progress-step done';
+  }
+  setTimeout(() => {
+    document.getElementById('progress-area').classList.remove('visible');
+  }, 1200);
+}
+
+function abortProgress() {
+  clearInterval(_progInterval);
+  document.getElementById('progress-area').classList.remove('visible');
+}
+
+function _setAllSteps(cls) {
+  for (let i = 0; i < 6; i++) {
+    document.getElementById('pstep-' + i).className = 'progress-step' + (cls ? ' ' + cls : '');
+  }
+}
+
+// ─── Error ────────────────────────────────────────────────────────────────────
 function showError(msg) {
   const box = document.getElementById('error-box');
   box.textContent = msg;
@@ -510,14 +618,11 @@ function clearError() {
   document.getElementById('error-box').classList.remove('visible');
 }
 
-async function runPhase1() {
-  const input = document.getElementById('article-input').value.trim();
-  if (!input) return;
-
+// ─── Phase 1 ──────────────────────────────────────────────────────────────────
+async function runPhase1(input) {
   clearError();
-  document.getElementById('results').classList.remove('visible');
+  startProgress();
   document.getElementById('analyze-btn').disabled = true;
-  setStatus('Extracting article and finding opposing view...');
 
   try {
     const resp = await fetch('/api/analyze', {
@@ -531,20 +636,25 @@ async function runPhase1() {
     cacheKey = data.cache_key;
     renderPhase1(data);
     document.getElementById('results').classList.add('visible');
+    advanceToPhase2();
+    await runPhase2();
   } catch(e) {
+    abortProgress();
     showError('Error: ' + e.message);
-  } finally {
-    clearStatus();
     document.getElementById('analyze-btn').disabled = false;
   }
 }
 
-function renderPhase1(data) {
-  // Core disagreement
-  const cd = document.getElementById('core-disagreement');
-  cd.innerHTML = '<strong>Core Disagreement:</strong> ' + escHtml(data.core_disagreement);
+function runAnalyze() {
+  const input = document.getElementById('article-input').value.trim();
+  if (!input) return;
+  runPhase1(input);
+}
 
-  // Article A
+function renderPhase1(data) {
+  document.getElementById('core-disagreement').innerHTML =
+    '<strong>Core Disagreement:</strong> ' + escHtml(data.core_disagreement);
+
   const aUrl = data.article_a.source_url;
   document.getElementById('title-a').innerHTML = aUrl
     ? `<a href="${aUrl}" target="_blank">${escHtml(data.article_a.title)}</a>`
@@ -552,7 +662,6 @@ function renderPhase1(data) {
   document.getElementById('lean-a').textContent = data.article_a.ideology_lean || 'unknown';
   document.getElementById('summary-a').textContent = data.article_a.summary;
 
-  // Article B
   const bUrl = data.article_b.source_url;
   document.getElementById('title-b').innerHTML = bUrl
     ? `<a href="${bUrl}" target="_blank">${escHtml(data.article_b.title)}</a>`
@@ -560,7 +669,6 @@ function renderPhase1(data) {
   document.getElementById('lean-b').textContent = data.article_b.ideology_lean || 'unknown';
   document.getElementById('summary-b').textContent = data.article_b.summary;
 
-  // Points
   const tbody = document.getElementById('points-tbody');
   tbody.innerHTML = '';
   for (const p of (data.points || [])) {
@@ -572,17 +680,12 @@ function renderPhase1(data) {
     `;
     tbody.appendChild(tr);
   }
-
-  // Reset phase2 state
-  document.getElementById('score-btn-wrap').style.display = 'block';
-  document.getElementById('phase2-loading').style.display = 'none';
   document.getElementById('phase2-results').style.display = 'none';
 }
 
+// ─── Phase 2 (auto) ───────────────────────────────────────────────────────────
 async function runPhase2() {
   if (!cacheKey) return;
-  document.getElementById('score-btn-wrap').style.display = 'none';
-  document.getElementById('phase2-loading').style.display = 'block';
   clearError();
 
   try {
@@ -595,12 +698,13 @@ async function runPhase2() {
     if (!resp.ok) throw new Error(data.error || 'Server error');
 
     renderPhase2(data);
-    document.getElementById('phase2-loading').style.display = 'none';
+    completeProgress();
     document.getElementById('phase2-results').style.display = 'block';
   } catch(e) {
-    document.getElementById('phase2-loading').style.display = 'none';
-    document.getElementById('score-btn-wrap').style.display = 'block';
+    abortProgress();
     showError('Scoring error: ' + e.message);
+  } finally {
+    document.getElementById('analyze-btn').disabled = false;
   }
 }
 
@@ -661,9 +765,8 @@ function escAttr(s) {
   return String(s).replace(/"/g, '&quot;');
 }
 
-// Allow Enter key to submit
 document.getElementById('article-input').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') runPhase1();
+  if (e.key === 'Enter') runAnalyze();
 });
 
 // ─── Tab switching ────────────────────────────────────────────────────────────
@@ -712,36 +815,18 @@ async function runPhase1PDF() {
   if (!selectedPdf) return;
 
   clearError();
-  document.getElementById('results').classList.remove('visible');
   document.getElementById('analyze-btn-pdf').disabled = true;
-  setStatus('Extracting text from PDF...');
 
   try {
-    // Step 1: upload PDF, get text back
     const formData = new FormData();
     formData.append('file', selectedPdf);
     const uploadResp = await fetch('/api/upload-pdf', { method: 'POST', body: formData });
     const uploadData = await uploadResp.json();
     if (!uploadResp.ok) throw new Error(uploadData.error || 'PDF extraction failed');
 
-    setStatus(`Analyzing article (${uploadData.page_count} pages, ${uploadData.char_count.toLocaleString()} chars)...`);
-
-    // Step 2: run analyze with the extracted text
-    const resp = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({input: uploadData.text})
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Server error');
-
-    cacheKey = data.cache_key;
-    renderPhase1(data);
-    document.getElementById('results').classList.add('visible');
+    await runPhase1(uploadData.text);
   } catch(e) {
     showError('Error: ' + e.message);
-  } finally {
-    clearStatus();
     document.getElementById('analyze-btn-pdf').disabled = false;
   }
 }
